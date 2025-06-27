@@ -66,6 +66,7 @@ public sealed class ContextualFunctionProviderTests : BaseIntegrationTest, IDisp
                 Name = "ReviewGuru",
                 Instructions = "You are a friendly assistant that summarizes key points and sentiments from customer reviews.",
                 Kernel = this._kernel,
+                UseImmutableKernel = true, // Usage of immutable kernel is required for the context provider feature.
                 Arguments = new(new PromptExecutionSettings { FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(options: new FunctionChoiceBehaviorOptions { RetainArgumentTypes = true }) })
             };
 
@@ -106,6 +107,7 @@ public sealed class ContextualFunctionProviderTests : BaseIntegrationTest, IDisp
                 Instructions = "You are a helpful assistant that helps with Azure resource management. " +
                                "Avoid including the phrase like 'If you need further assistance or have any additional tasks, feel free to let me know!' in any responses.",
                 Kernel = this._kernel,
+                UseImmutableKernel = true, // Usage of immutable kernel is required for the context provider feature.
                 Arguments = new(new PromptExecutionSettings { FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(options: new FunctionChoiceBehaviorOptions { RetainArgumentTypes = true }) })
             };
 
@@ -116,7 +118,31 @@ public sealed class ContextualFunctionProviderTests : BaseIntegrationTest, IDisp
             maxNumberOfFunctions: 1, // Instruct the provider to return only one relevant function
             options: new ContextualFunctionProviderOptions
             {
-                NumberOfRecentMessagesInContext = 1 // Use only the last message from the previous agent invocation  
+                NumberOfRecentMessagesInContext = 1, // Use only the last message from the previous agent invocation
+                ContextEmbeddingValueProvider = (recentMessages, newMessages, _) =>
+                {
+                    string context;
+
+                    // Provide a deterministic context for the VM deployment request instead of using the one assembled by the provider based on
+                    // the LLM's non-deterministic response for the VM provisioning request. This is done to ensure that the context is always
+                    // the same for the VM deployment request; otherwise, the non-deterministic context could lead to different function selection
+                    // results for the same VM deployment request, resulting in test flakiness.  
+                    if (newMessages.Any(m => m.Text.Contains("Deploy it")))
+                    {
+                        context = "A VM has been successfully provisioned with the ID: 40a2d11e-233b-409e-8638-9d4508623b93.\r\nDeploy it";
+                    }
+                    else
+                    {
+                        context = string.Join(
+                            Environment.NewLine,
+                            recentMessages
+                            .TakeLast(1)
+                            .Where(m => !string.IsNullOrWhiteSpace(m?.Text))
+                            .Select(m => m.Text));
+                    }
+
+                    return Task.FromResult(context);
+                },
             }
         );
 
